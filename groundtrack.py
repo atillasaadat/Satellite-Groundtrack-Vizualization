@@ -96,16 +96,30 @@ def update_metrics(n):
     ]
 
 # Multiple components can update every time interval gets fired.
-data = pd.DataFrame(columns=['Timestamp', 'Latitude', 'Longitude'])
+
+data = {
+    'Timestamp': [],
+    'Latitude' : [],
+    'Longitude': [],
+    'Color': []
+}
+data = pd.DataFrame.from_dict(data)
 
 # Collect some data
 @app.callback(Output('live-update-graph', 'figure'),
               Input('interval-component', 'n_intervals'))
 def update_graph_live(n):
+    global data
     current_datetime = datetime.now(utc_timezone)
     lat, lon = sat.propagate_sgp4(current_datetime)
-    embed()
-    data = data.append({'Timestamp': current_datetime, 'Latitude': lat, 'Longitude': lon}, ignore_index=True)
+    #data = pd.DataFrame(columns=['Timestamp', 'Latitude', 'Longitude'])
+    #data = data.append({'Timestamp': current_datetime, 'Latitude': lat, 'Longitude': lon}, ignore_index=True)
+    data = pd.concat([data, pd.DataFrame.from_dict({'Timestamp': [current_datetime], 'Latitude': [lat], 'Longitude': [lon], 'Color': ['blue']})], ignore_index=True)
+
+    # data['Timestamp'].append(current_datetime)
+    # data['Latitude'].append(lat)
+    # data['Longitude'].append(lon)
+
 
     # Create a list of dictionaries for the ground station information
     ground_stations = [
@@ -116,7 +130,33 @@ def update_graph_live(n):
         {'name': 'Punta Arenas', 'lat': -52.94111, 'lon': -70.84972, 'color': "magenta"},
     ]
 
-    fig = px.line_geo(lat="Latitude", lon="Longitude",hover_data="Timestamp", markers=True)
+    fig = px.line_geo(data, lat="Latitude", lon="Longitude", hover_data="Timestamp", markers=True)
+    #fig = px.line_geo(lat=data["Latitude"][:-1], lon=data["Longitude"][:-1], markers=True)
+    # fig.add_trace(
+    #     go.Scattergeo(
+    #         lat=[data["Latitude"][-1]], 
+    #         lon=[data["Longitude"][-1]],
+    #         mode='markers+lines',
+    #         marker_symbol='star',
+    #         name='Droid1',
+    #         marker=dict(
+    #             size=10,
+    #             color='red',
+    #             opacity=0.7
+    #         )
+    #     )
+    # )
+    
+    fig.update_geos(lataxis_showgrid=True, lonaxis_showgrid=True)
+    fig.update_geos(
+        visible=False, resolution=50,
+        showcountries=True, countrycolor="RebeccaPurple",
+        showland=True, landcolor="LightGreen",
+        showocean=True, oceancolor="LightBlue",
+        showlakes=True, lakecolor="Blue",
+        showcoastlines=True, coastlinecolor="RebeccaPurple",
+        showsubunits=True, subunitcolor="Blue"
+    )
 
     # Add ground stations as scatter markers
     for station in ground_stations:
