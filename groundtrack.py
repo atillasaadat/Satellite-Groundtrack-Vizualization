@@ -217,8 +217,9 @@ def update_metrics(n):
     lat, lon = sat.propagate_sgp4(current_datetime)
     style = {'padding': '-5px', 'fontSize': '16px'}
     return [
-        html.Span(f'Timestamp: {current_datetime.strftime("%Y-%m-%d %H:%M:%S")} UTC ', style=style),
-        html.Span(f'Longitude: {lon:.3f}° ', style=style),
+        html.Span(f'Timestamp: {current_datetime.strftime("%Y-%m-%d %H:%M:%S")} UTC, ', style=style),
+        html.Span(f'Timestamp: {current_datetime.astimezone(la_tz).strftime("%Y-%m-%d %H:%M:%S")} PT, ', style=style),
+        html.Span(f'Longitude: {lon:.3f}°,  ', style=style),
         html.Span(f'Latitude: {lat:.3f}° ', style=style),
     ]
 
