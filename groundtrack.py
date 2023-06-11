@@ -44,6 +44,106 @@ def load_text_file_from_norad_id(norad_id, hardcode=True):
         print("Failed to load the file from the URL:", url)
         return []
 
+def JulianDayFromDate(date,calendar='standard'):
+
+    """
+creates a Julian Day from a 'datetime-like' object.  Returns the fractional
+Julian Day (resolution 1 second).
+
+if calendar='standard' or 'gregorian' (default), Julian day follows Julian 
+Calendar on and before 1582-10-5, Gregorian calendar after 1582-10-15.
+
+if calendar='proleptic_gregorian', Julian Day follows gregorian calendar.
+
+if calendar='julian', Julian Day follows julian calendar.
+
+Algorithm:
+
+Meeus, Jean (1998) Astronomical Algorithms (2nd Edition). Willmann-Bell,
+Virginia. p. 63
+    """
+    # based on redate.py by David Finlayson.
+    year=date.year; month=date.month; day=date.day
+    hour=date.hour; minute=date.minute; second=date.second
+    # Convert time to fractions of a day
+    day = day + hour/24.0 + minute/1440.0 + second/86400.0
+    # Start Meeus algorithm (variables are in his notation)
+    if (month < 3):
+        month = month + 12
+        year = year - 1
+    A = int(year/100)
+    jd = int(365.25 * (year + 4716)) + int(30.6001 * (month + 1)) + \
+         day - 1524.5
+    # optionally adjust the jd for the switch from 
+    # the Julian to Gregorian Calendar
+    # here assumed to have occurred the day after 1582 October 4
+    if calendar in ['standard','gregorian']:
+        if jd >= 2299170.5:
+            # 1582 October 15 (Gregorian Calendar)
+            B = 2 - A + int(A/4)
+        elif jd < 2299160.5:
+            # 1582 October 5 (Julian Calendar)
+            B = 0
+        else:
+            raise ValueError('impossible date (falls in gap between end of Julian calendar and beginning of Gregorian calendar')
+    elif calendar == 'proleptic_gregorian':
+        B = 2 - A + int(A/4)
+    elif calendar == 'julian':
+        B = 0
+    else:
+        raise ValueError('unknown calendar, must be one of julian,standard,gregorian,proleptic_gregorian, got %s' % calendar)
+    # adjust for Julian calendar if necessary
+    jd = jd + B
+    return jd 
+
+def epem(date):
+    """
+    input: date - datetime object (assumed UTC)
+    ouput: gha - Greenwich hour angle, the angle between the Greenwich
+           meridian and the meridian containing the subsolar point.
+           dec - solar declination.
+    """
+    dg2rad = np.pi/180.
+    rad2dg = 1./dg2rad
+    # compute julian day from UTC datetime object.
+    # datetime objects use proleptic gregorian calendar.
+    jday = JulianDayFromDate(date,calendar='proleptic_gregorian')
+    jd = np.floor(jday) # truncate to integer.
+    # utc hour.
+    ut = date.hour + date.minute/60. + date.second/3600.
+    # calculate number of centuries from J2000
+    t = (jd + (ut/24.) - 2451545.0) / 36525.
+    # mean longitude corrected for aberration
+    l = (280.460 + 36000.770 * t) % 360
+    # mean anomaly
+    g = 357.528 + 35999.050 * t
+    # ecliptic longitude
+    lm = l + 1.915 * np.sin(g*dg2rad) + 0.020 * np.sin(2*g*dg2rad)
+    # obliquity of the ecliptic
+    ep = 23.4393 - 0.01300 * t
+    # equation of time
+    eqtime = -1.915*np.sin(g*dg2rad) - 0.020*np.sin(2*g*dg2rad) \
+            + 2.466*np.sin(2*lm*dg2rad) - 0.053*np.sin(4*lm*dg2rad)
+    # Greenwich hour angle
+    gha = 15*ut - 180 + eqtime
+    # declination of sun
+    dec = np.arcsin(np.sin(ep*dg2rad) * np.sin(lm*dg2rad)) * rad2dg
+    return gha, dec
+
+def daynight_terminator(date, delta, lonmin, lonmax):
+    """
+    date is datetime object (assumed UTC).
+    nlons is # of longitudes used to compute terminator."""
+    dg2rad = np.pi/180.
+    lons = np.arange(lonmin,lonmax+0.5*delta,delta,dtype=np.float32)
+    # compute greenwich hour angle and solar declination
+    # from datetime object (assumed UTC).
+    tau, dec = epem(date)
+    # compute day/night terminator from hour angle, declination.
+    longitude = lons + tau
+    lats = np.arctan(-np.cos(longitude*dg2rad)/np.tan(dec*dg2rad))/dg2rad
+    return lats, lons
+
 
 class SpacecraftPropagator:
     def __init__(self, tle_file=None):
@@ -52,7 +152,7 @@ class SpacecraftPropagator:
         #line2 = '2 25544  51.6424   5.8692 0005411  66.8319   6.5873 15.50623283400624'
         #self.satellite = Satrec.twoline2rv(line1, line2)
         self.ts = load.timescale()
-        self.satellite =  Satrec.twoline2rv(*load_text_file_from_norad_id(25544, hardcode=False), WGS72)
+        self.satellite =  Satrec.twoline2rv(*load_text_file_from_norad_id(25544, hardcode=True), WGS72)
 
     def propagate_sgp4(self, timestamp_datetime):
         time = Time(timestamp_datetime)
@@ -234,6 +334,25 @@ def update_graph_live(n):
     #     uirevision=1,
     # )
 
+    # Ground Station Plotting
+
+        # Day Night Shading
+    day_night_lats, day_night_lons = daynight_terminator(current_datetime, 1, -180, 180)
+
+    # Convert lons and lats to lists and append new elements
+    day_night_lons = list(day_night_lons) + [day_night_lons[-1], day_night_lons[0]]
+    day_night_lats = list(day_night_lats) + [-90, -90]
+
+    # Create a scatter plot of the terminator coordinates
+    scatter = fig.add_trace(go.Scattermapbox(lon = day_night_lons,
+                           lat = day_night_lats,
+                           mode = 'lines', 
+                           line = dict(width = 2, color = 'rgba(138,138,138,1)'),
+                           fill = 'toself',
+                           hoverinfo='skip',
+                           fillcolor = 'rgba(138,138,138,0.2)',
+                           hovertemplate=None))
+
     for station in ground_stations:
         circle_coordinates = get_gs_access_circle(station['lat'],station['lon'],gs_comms_radius)
         # Create the trace for the circle
@@ -250,6 +369,7 @@ def update_graph_live(n):
                 "<b>Longitude:</b> %{lon:.3f}°<br>" +
                 "<extra></extra>",
         ))
+
 
     # Create a color list of the same length as your data, with all 'green'
     color_list = ['blue' for _ in range(len(data['Latitude']))]
@@ -282,7 +402,7 @@ def update_graph_live(n):
             lat=data["Latitude"],  # Provide the latitude data
             lon=data["Longitude"],  # Provide the longitude data
             hovertext=data["Timestamp"],  # Set hovertext to "Timestamp" column
-            customdata=[dt.strptime(i,"%Y-%m-%d %H:%M:%S").astimezone(la_tz).strftime("%Y-%m-%d %H:%M:%S") for i in forward_data["Timestamp_LA"]],
+            customdata=[dt.strptime(i,"%Y-%m-%d %H:%M:%S").astimezone(la_tz).strftime("%Y-%m-%d %H:%M:%S") for i in data["Timestamp_LA"]],
             hovertemplate=
                 "<b>Timestamp [UTC]:</b> %{hovertext}<br>" +
                 "<b>Timestamp    [PT]:</b> %{customdata}<br>" +
@@ -316,7 +436,7 @@ def update_graph_live(n):
 
     fig.update_layout(
         width=1900,  # Width of the figure (adjust to your screen resolution)
-        height=1200,  # Height of the figure (adjust to your screen resolution)
+        height=1080,  # Height of the figure (adjust to your screen resolution)
         uirevision=1
     )
        # Set layout for the map
@@ -324,10 +444,10 @@ def update_graph_live(n):
         mapbox=dict(
             #style="open-street-map",  # Choose the map style (e.g., "carto-positron", "stamen-terrain", etc.)
             #style="carto-positron",  # Choose the map style (e.g., "carto-positron", "stamen-terrain", etc.)
-            style="carto-darkmatter",  # Choose the map style (e.g., "carto-positron", "stamen-terrain", etc.)
+            #style="carto-darkmatter",  # Choose the map style (e.g., "carto-positron", "stamen-terrain", etc.)
             #style="stamen-terrain",  # Choose the map style (e.g., "carto-positron", "stamen-terrain", etc.)
             #style="stamen-toner",  # Choose the map style (e.g., "carto-positron", "stamen-terrain", etc.)
-            #style="stamen-watercolor",  # Choose the map style (e.g., "carto-positron", "stamen-terrain", etc.)
+            style="stamen-watercolor",  # Choose the map style (e.g., "carto-positron", "stamen-terrain", etc.)
             center=dict(lat=0, lon=0),  # Set the initial center of the map
             zoom=1  # Set the initial zoom level
         ),
@@ -356,7 +476,7 @@ if __name__ == '__main__':
     current_datetime = dt.now(utc_timezone)
     
     interval_s = 30  # interval in seconds
-    end_time_minutes = 60  # minutes into the future
+    end_time_minutes = 95  # minutes into the future
     # Create a list of datetimes using list comprehension
     end_time = current_datetime + timedelta(minutes=end_time_minutes)
     future_datetimes = [(current_datetime + timedelta(seconds=i)) for i in range(0, int((end_time-current_datetime).total_seconds()), interval_s)]
